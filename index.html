@@ -420,6 +420,36 @@
 
     let pendingUploadFileData = null;
 
+    // Kekalkan perubahan tetapan Google Drive & Data supaya tidak hilang apabila tukar akaun Admin <-> User
+    function saveSystemState() {
+      try {
+        localStorage.setItem('iDOC_HEP_PTSS_DRIVE_CFG', JSON.stringify(DB.TETAPAN_SISTEM));
+      } catch (e) {}
+    }
+
+    function loadSystemState() {
+      try {
+        const savedCfg = localStorage.getItem('iDOC_HEP_PTSS_DRIVE_CFG');
+        if (savedCfg) {
+          Object.assign(DB.TETAPAN_SISTEM, JSON.parse(savedCfg));
+        }
+      } catch (e) {}
+    }
+
+    function getTargetDriveUrlForDoc(docRecord) {
+      const cfg = DB.TETAPAN_SISTEM;
+      if (docRecord && docRecord.drive_direct_url) return docRecord.drive_direct_url;
+      if (docRecord && docRecord.jenis_dokumen === 'Laporan') {
+        if (cfg.laporan_drive_url && cfg.laporan_drive_url.startsWith('http')) return cfg.laporan_drive_url;
+        if (cfg.laporan_folder_id) return `https://drive.google.com/drive/folders/${cfg.laporan_folder_id}`;
+      } else {
+        if (cfg.kertas_kerja_drive_url && cfg.kertas_kerja_drive_url.startsWith('http')) return cfg.kertas_kerja_drive_url;
+        if (cfg.kertas_kerja_folder_id) return `https://drive.google.com/drive/folders/${cfg.kertas_kerja_folder_id}`;
+      }
+      if (cfg.root_drive_url && cfg.root_drive_url.startsWith('http')) return cfg.root_drive_url;
+      return 'https://drive.google.com/drive/my-drive';
+    }
+
     /***************************************************************************
      * BACKEND SERVICE & KAWALAN AKSES JABATAN/UNIT
      ***************************************************************************/
@@ -661,6 +691,10 @@
           ? DB.TETAPAN_SISTEM.laporan_folder_id
           : DB.TETAPAN_SISTEM.kertas_kerja_folder_id;
 
+        const targetDriveUrl = payload.jenis_dokumen === 'Laporan'
+          ? DB.TETAPAN_SISTEM.laporan_drive_url
+          : DB.TETAPAN_SISTEM.kertas_kerja_drive_url;
+
         const newDocId = 'DOC2026' + String(DB.DOKUMEN.length + 1).padStart(2, '0');
         const newDoc = {
           document_id: newDocId,
@@ -671,8 +705,9 @@
           saiz_fail: payload.saiz_fail || '540 KB',
           mime_type: payload.mime_type || 'application/pdf',
           file_data_url: payload.file_data_url || '',
-          drive_file_id: '1DRV_' + targetProgram.unit_id + '_' + targetProgram.program_id + '_' + Math.floor(1000 + Math.random() * 9000),
-          drive_folder_path: `${DB.TETAPAN_SISTEM.root_folder_name}/2026/${targetProgram.unit_id}/${targetProgram.program_id}/${payload.jenis_dokumen}/ (Folder ID: ${folderTargetId})`,
+          drive_direct_url: targetDriveUrl || '',
+          drive_file_id: folderTargetId || ('1DRV_' + targetProgram.unit_id + '_' + targetProgram.program_id),
+          drive_folder_path: `${DB.TETAPAN_SISTEM.root_folder_name}/2026/${targetProgram.unit_id}/${targetProgram.program_id}/${payload.jenis_dokumen}/`,
           disediakan_oleh: payload.disediakan_oleh || user.full_name,
           tarikh_muat_naik: this.nowStr().slice(0, 10),
           status_pengesahan: 'DISAHKAN'
@@ -1780,11 +1815,20 @@
                     <td class="py-3 px-3">
                       <span class="px-2.5 py-0.5 rounded-full text-xs font-bold ${d.jenis_dokumen === 'Kertas Kerja' ? 'bg-emerald-100 text-emerald-800' : 'bg-blue-100 text-blue-800'}">${d.jenis_dokumen}</span>
                     </td>
-                    <td class="py-3 px-3 font-mono text-[11px] text-slate-500">${d.drive_folder_path}</td>
+                    <td class="py-3 px-3">
+                      <a href="${getTargetDriveUrlForDoc(d)}" target="_blank" rel="noopener noreferrer" class="font-mono text-[11px] text-blue-600 hover:underline flex items-center gap-1">
+                        <i class="fa-brands fa-google-drive"></i> ${d.drive_folder_path}
+                      </a>
+                    </td>
                     <td class="py-3 px-3 text-center">
-                      <button onclick="previewUploadedDocument('${d.document_id}')" class="px-3 py-1 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold text-xs">
-                        <i class="fa-solid fa-eye mr-1"></i> Buka Fail
-                      </button>
+                      <div class="inline-flex items-center gap-1.5">
+                        <button onclick="previewUploadedDocument('${d.document_id}')" class="px-3 py-1 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold text-xs">
+                          <i class="fa-solid fa-eye mr-1"></i> Pratonton
+                        </button>
+                        <a href="${getTargetDriveUrlForDoc(d)}" target="_blank" rel="noopener noreferrer" class="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center gap-1">
+                          <i class="fa-brands fa-google-drive"></i> Buka Drive
+                        </a>
+                      </div>
                     </td>
                   </tr>
                 `).join('')}
@@ -2518,9 +2562,18 @@
                     <td class="py-3.5 px-3">
                       <span class="px-2.5 py-0.5 rounded-full font-bold ${d.jenis_dokumen === 'Kertas Kerja' ? 'bg-emerald-100 text-emerald-800' : 'bg-blue-100 text-blue-800'}">${d.jenis_dokumen}</span>
                     </td>
-                    <td class="py-3.5 px-3 font-mono text-[11px] text-slate-500">${d.drive_folder_path}</td>
+                    <td class="py-3.5 px-3">
+                      <a href="${getTargetDriveUrlForDoc(d)}" target="_blank" rel="noopener noreferrer" class="font-mono text-[11px] text-blue-600 hover:underline flex items-center gap-1">
+                        <i class="fa-brands fa-google-drive"></i> ${d.drive_folder_path}
+                      </a>
+                    </td>
                     <td class="py-3.5 px-3 text-center">
-                      <button onclick="previewUploadedDocument('${d.document_id}')" class="px-3 py-1 rounded-lg bg-blue-50 text-blue-700 font-bold">Pratonton</button>
+                      <div class="inline-flex items-center gap-1.5">
+                        <button onclick="previewUploadedDocument('${d.document_id}')" class="px-3 py-1 rounded-lg bg-blue-50 text-blue-700 font-bold">Pratonton</button>
+                        <a href="${getTargetDriveUrlForDoc(d)}" target="_blank" rel="noopener noreferrer" class="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold flex items-center gap-1">
+                          <i class="fa-brands fa-google-drive"></i> Drive
+                        </a>
+                      </div>
                     </td>
                   </tr>
                 `).join('')}
@@ -2534,23 +2587,51 @@
     function previewUploadedDocument(docId) {
       const d = DB.DOKUMEN.find(x => x.document_id === docId);
       if (!d) return;
+      const driveUrl = getTargetDriveUrlForDoc(d);
+
       openModal(
         `<i class="fa-solid fa-file-pdf"></i> Pratonton Fail: ${d.nama_fail}`,
         `
           <div class="space-y-4 text-xs sm:text-sm">
-            <div class="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
+            <div class="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-1.5">
               <div><strong>ID Dokumen:</strong> ${d.document_id}</div>
               <div><strong>Jenis Dokumen:</strong> ${d.jenis_dokumen}</div>
-              <div><strong>Laluan Google Drive:</strong> <span class="font-mono text-blue-700">${d.drive_folder_path}</span></div>
+              <div class="flex flex-wrap items-center gap-1.5">
+                <strong>Laluan Google Drive:</strong>
+                <a href="${driveUrl}" target="_blank" rel="noopener noreferrer" class="font-mono text-blue-600 hover:text-blue-800 underline font-semibold break-all">
+                  ${d.drive_folder_path} <i class="fa-solid fa-arrow-up-right-from-square text-[10px] ml-0.5"></i>
+                </a>
+              </div>
               <div><strong>Disediakan Oleh:</strong> ${d.disediakan_oleh} (${d.tarikh_muat_naik})</div>
             </div>
             ${d.file_data_url ? `
-              <iframe src="${d.file_data_url}" class="w-full h-96 rounded-xl border border-slate-300"></iframe>
+              <div class="space-y-3">
+                <iframe src="${d.file_data_url}" class="w-full h-96 rounded-xl border border-slate-300"></iframe>
+                <div class="flex justify-end gap-2">
+                  <a href="${d.file_data_url}" download="${d.nama_fail}" class="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs flex items-center gap-1.5">
+                    <i class="fa-solid fa-download"></i> Muat Turun Fail Asal
+                  </a>
+                  <a href="${driveUrl}" target="_blank" rel="noopener noreferrer" class="px-5 py-2.5 rounded-xl btn-primary-grad text-white font-extrabold text-xs flex items-center gap-2 shadow-md">
+                    <i class="fa-brands fa-google-drive text-sm"></i> Buka Folder Google Drive (${d.jenis_dokumen})
+                  </a>
+                </div>
+              </div>
             ` : `
-              <div class="p-8 rounded-xl bg-blue-50/50 border border-blue-200 text-center space-y-2">
-                <i class="fa-brands fa-google-drive text-4xl text-blue-600"></i>
-                <div class="font-bold text-slate-800">Fail Disimpan Dalam Folder Google Drive iDOC HEP</div>
-                <div class="text-xs text-slate-500">ID Fail Google Drive: <span class="font-mono font-bold">${d.drive_file_id}</span></div>
+              <div class="p-8 rounded-2xl bg-blue-50/60 border border-blue-200 text-center space-y-3">
+                <a href="${driveUrl}" target="_blank" rel="noopener noreferrer" class="w-16 h-16 mx-auto rounded-2xl bg-white shadow-sm border border-blue-100 flex items-center justify-center text-4xl text-blue-600 hover:scale-105 transition">
+                  <i class="fa-brands fa-google-drive"></i>
+                </a>
+                <div>
+                  <div class="font-extrabold text-slate-900 text-sm sm:text-base">Fail Disimpan Dalam Folder Google Drive iDOC HEP</div>
+                  <div class="text-xs text-slate-500 mt-1">Pautan Folder (${d.jenis_dokumen}): <span class="font-mono font-bold text-slate-700 break-all">${driveUrl}</span></div>
+                </div>
+                <div class="pt-2 flex flex-wrap justify-center gap-2.5">
+                  <a href="${driveUrl}" target="_blank" rel="noopener noreferrer"
+                    class="px-6 py-3 rounded-xl btn-primary-grad text-white font-extrabold text-xs sm:text-sm inline-flex items-center gap-2 shadow-lg">
+                    <i class="fa-brands fa-google-drive text-base"></i> Klik Untuk Buka Google Drive Sekarang
+                    <i class="fa-solid fa-arrow-up-right-from-square text-xs"></i>
+                  </a>
+                </div>
               </div>
             `}
           </div>
@@ -2565,16 +2646,28 @@
         `<i class="fa-solid fa-folder-open"></i> Fail Dokumen Program: ${p ? p.nama_program : programId}`,
         `
           <div class="space-y-4 text-xs sm:text-sm">
-            ${docs.length === 0 ? `<div class="p-6 text-center text-slate-400">Belum ada dokumen dimuat naik bagi program ini.</div>` : docs.map(d => `
-              <div class="p-3.5 rounded-xl border border-slate-200 flex items-center justify-between">
-                <div>
-                  <span class="px-2 py-0.5 rounded bg-blue-100 text-blue-800 font-bold text-[11px]">${d.jenis_dokumen}</span>
-                  <div class="font-bold text-slate-900 mt-1">${d.nama_fail}</div>
-                  <div class="text-[11px] font-mono text-slate-500">${d.drive_folder_path}</div>
+            ${docs.length === 0 ? `<div class="p-6 text-center text-slate-400">Belum ada dokumen dimuat naik bagi program ini.</div>` : docs.map(d => {
+              const driveUrl = getTargetDriveUrlForDoc(d);
+              return `
+                <div class="p-3.5 rounded-xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <span class="px-2 py-0.5 rounded bg-blue-100 text-blue-800 font-bold text-[11px]">${d.jenis_dokumen}</span>
+                    <div class="font-bold text-slate-900 mt-1">${d.nama_fail}</div>
+                    <a href="${driveUrl}" target="_blank" rel="noopener noreferrer" class="text-[11px] font-mono text-blue-600 hover:underline block mt-0.5">
+                      <i class="fa-brands fa-google-drive mr-1"></i>${d.drive_folder_path}
+                    </a>
+                  </div>
+                  <div class="flex items-center gap-2 shrink-0">
+                    <button onclick="previewUploadedDocument('${d.document_id}')" class="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs">
+                      Pratonton
+                    </button>
+                    <a href="${driveUrl}" target="_blank" rel="noopener noreferrer" class="px-3.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-2xs">
+                      <i class="fa-brands fa-google-drive"></i> Buka Drive
+                    </a>
+                  </div>
                 </div>
-                <button onclick="previewUploadedDocument('${d.document_id}')" class="px-3 py-1.5 rounded-lg bg-blue-600 text-white font-bold text-xs">Lihat</button>
-              </div>
-            `).join('')}
+              `;
+            }).join('')}
           </div>
         `
       );
@@ -2810,13 +2903,23 @@
           <form onsubmit="handleSaveDriveSettings(event)" class="space-y-4 text-xs sm:text-sm">
             <div>
               <label class="block font-bold text-slate-700 mb-1">1. Pautan Folder Google Drive — KERTAS KERJA</label>
-              <input type="text" id="cfgKKDriveUrl" required value="${cfg.kertas_kerja_drive_url}" class="w-full px-4 py-2.5 rounded-xl border border-slate-300 font-mono text-xs">
+              <div class="flex gap-2">
+                <input type="url" id="cfgKKDriveUrl" required value="${cfg.kertas_kerja_drive_url}" placeholder="https://drive.google.com/drive/folders/..." class="flex-1 px-4 py-2.5 rounded-xl border border-slate-300 font-mono text-xs">
+                <a href="${cfg.kertas_kerja_drive_url}" target="_blank" rel="noopener noreferrer" class="px-4 py-2.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold text-xs flex items-center gap-1.5 shrink-0">
+                  <i class="fa-solid fa-arrow-up-right-from-square"></i> Uji Buka
+                </a>
+              </div>
               <p class="text-[11px] text-slate-500 mt-1">Folder ID Dikesan: <span class="font-mono font-bold text-blue-700">${cfg.kertas_kerja_folder_id}</span></p>
             </div>
 
             <div>
               <label class="block font-bold text-slate-700 mb-1">2. Pautan Folder Google Drive — LAPORAN PROGRAM</label>
-              <input type="text" id="cfgLapDriveUrl" required value="${cfg.laporan_drive_url}" class="w-full px-4 py-2.5 rounded-xl border border-slate-300 font-mono text-xs">
+              <div class="flex gap-2">
+                <input type="url" id="cfgLapDriveUrl" required value="${cfg.laporan_drive_url}" placeholder="https://drive.google.com/drive/folders/..." class="flex-1 px-4 py-2.5 rounded-xl border border-slate-300 font-mono text-xs">
+                <a href="${cfg.laporan_drive_url}" target="_blank" rel="noopener noreferrer" class="px-4 py-2.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold text-xs flex items-center gap-1.5 shrink-0">
+                  <i class="fa-solid fa-arrow-up-right-from-square"></i> Uji Buka
+                </a>
+              </div>
               <p class="text-[11px] text-slate-500 mt-1">Folder ID Dikesan: <span class="font-mono font-bold text-blue-700">${cfg.laporan_folder_id}</span></p>
             </div>
 
@@ -2847,7 +2950,8 @@
       DB.TETAPAN_SISTEM.laporan_folder_id = BackendService.extractGoogleIdFromUrl(lapUrl);
       DB.TETAPAN_SISTEM.spreadsheet_id = BackendService.extractGoogleIdFromUrl(sheetId);
 
-      showToast('Tetapan pautan Google Drive Kertas Kerja & Laporan berjaya disimpan!', 'success');
+      saveSystemState();
+      showToast('Tetapan pautan Google Drive Kertas Kerja & Laporan telah disimpan dan diaktifkan untuk semua pengguna!', 'success');
       renderWorkspaceContent();
     }
 
@@ -2982,6 +3086,7 @@ function setupDatabase() {
     }
 
     window.onload = function () {
+      loadSystemState();
       BackendService.syncProgramAndBudget();
       switchAuthTab('login');
     };
