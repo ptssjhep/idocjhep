@@ -387,12 +387,12 @@
         { log_id: 'LOG002', timestamp: '2026-01-25 10:02:10', user_id: 'USR001', username: 'admin', role: 'ADMIN', unit_id: 'ALL', action: 'PENYELARASAN_BELANJAWAN', status: 'BERJAYA', details: 'Penyelarasan automatik jadual Program dan Belanjawan' }
       ],
       TETAPAN_SISTEM: {
-        root_drive_url: 'https://drive.google.com/drive/folders/1iDOCHEP_PTSS_ROOT_2026_FOLDER',
-        root_drive_folder_id: '1iDOCHEP_PTSS_ROOT_2026_FOLDER',
-        kertas_kerja_drive_url: 'https://drive.google.com/drive/folders/1iDOCHEP_PTSS_KERTAS_KERJA_2026',
-        kertas_kerja_folder_id: '1iDOCHEP_PTSS_KERTAS_KERJA_2026',
-        laporan_drive_url: 'https://drive.google.com/drive/folders/1iDOCHEP_PTSS_LAPORAN_2026',
-        laporan_folder_id: '1iDOCHEP_PTSS_LAPORAN_2026',
+        root_drive_url: 'https://drive.google.com/drive/my-drive',
+        root_drive_folder_id: 'root',
+        kertas_kerja_drive_url: 'https://drive.google.com/drive/my-drive',
+        kertas_kerja_folder_id: 'FOLDER_KERTAS_KERJA',
+        laporan_drive_url: 'https://drive.google.com/drive/my-drive',
+        laporan_folder_id: 'FOLDER_LAPORAN',
         root_folder_name: 'iDOC HEP',
         spreadsheet_url: 'https://docs.google.com/spreadsheets/d/1nW0DEFCj6B3k89SOfzMhQoNVk7SkSLs-a27jakOzmfE/edit',
         spreadsheet_id: '1nW0DEFCj6B3k89SOfzMhQoNVk7SkSLs-a27jakOzmfE',
@@ -420,10 +420,43 @@
 
     let pendingUploadFileData = null;
 
+    function normalizeDriveUrl(rawUrl) {
+      if (!rawUrl || !rawUrl.trim()) return 'https://drive.google.com/drive/my-drive';
+      let u = rawUrl.trim();
+      if (!/^https?:\/\//i.test(u)) {
+        u = 'https://' + u;
+      }
+      return u;
+    }
+
+    function syncAllDocumentsWithDriveSettings() {
+      const cfg = DB.TETAPAN_SISTEM;
+      const kkUrl = normalizeDriveUrl(cfg.kertas_kerja_drive_url);
+      const lapUrl = normalizeDriveUrl(cfg.laporan_drive_url);
+
+      DB.DOKUMEN.forEach(doc => {
+        if (doc.jenis_dokumen === 'Laporan') {
+          doc.drive_direct_url = lapUrl;
+          doc.drive_file_id = cfg.laporan_folder_id || BackendService.extractGoogleIdFromUrl(lapUrl);
+          doc.drive_folder_path = lapUrl;
+        } else {
+          doc.drive_direct_url = kkUrl;
+          doc.drive_file_id = cfg.kertas_kerja_folder_id || BackendService.extractGoogleIdFromUrl(kkUrl);
+          doc.drive_folder_path = kkUrl;
+        }
+      });
+    }
+
     // Kekalkan perubahan tetapan Google Drive & Data supaya tidak hilang apabila tukar akaun Admin <-> User
     function saveSystemState() {
       try {
         localStorage.setItem('iDOC_HEP_PTSS_DRIVE_CFG', JSON.stringify(DB.TETAPAN_SISTEM));
+        // Simpan metadata dokumen dan program ke localStorage supaya kekal merentas sesi
+        const docsLight = DB.DOKUMEN.map(d => ({ ...d, file_data_url: '' }));
+        localStorage.setItem('iDOC_HEP_PTSS_DOCS', JSON.stringify(docsLight));
+        localStorage.setItem('iDOC_HEP_PTSS_PROGS', JSON.stringify(DB.PROGRAM));
+        localStorage.setItem('iDOC_HEP_PTSS_UNITS', JSON.stringify(DB.JABATAN_UNIT));
+        localStorage.setItem('iDOC_HEP_PTSS_USERS', JSON.stringify(DB.PENGGUNA));
       } catch (e) {}
     }
 
@@ -433,12 +466,104 @@
         if (savedCfg) {
           Object.assign(DB.TETAPAN_SISTEM, JSON.parse(savedCfg));
         }
+        const savedProgs = localStorage.getItem('iDOC_HEP_PTSS_PROGS');
+        if (savedProgs) DB.PROGRAM = JSON.parse(savedProgs);
+        const savedDocs = localStorage.getItem('iDOC_HEP_PTSS_DOCS');
+        if (savedDocs) DB.DOKUMEN = JSON.parse(savedDocs);
+        const savedUnits = localStorage.getItem('iDOC_HEP_PTSS_UNITS');
+        if (savedUnits) DB.JABATAN_UNIT = JSON.parse(savedUnits);
+        const savedUsers = localStorage.getItem('iDOC_HEP_PTSS_USERS');
+        if (savedUsers) DB.PENGGUNA = JSON.parse(savedUsers);
       } catch (e) {}
+    }
+
+    // Kemaskini semua rekod dokumen supaya menggunakan pautan Google Drive sebenar yang ditetapkan oleh Admin
+    function syncAllDocumentsWithDriveSettings() {
+      const cfg = DB.TETAPAN_SISTEM;
+      DB.DOKUMEN.forEach(d => {
+        if (d.jenis_dokumen === 'Laporan') {
+          if (cfg.laporan_drive_url && cfg.laporan_drive_url.startsWith('http')) {
+            if (!d.drive_direct_url || d.drive_direct_url.includes('1iDOCHEP_PTSS')) {
+              d.drive_direct_url = cfg.laporan_drive_url;
+            }
+            d.drive_folder_path = cfg.laporan_drive_url;
+          }
+          if (cfg.laporan_folder_id) d.drive_file_id = cfg.laporan_folder_id;
+        } else {
+          if (cfg.kertas_kerja_drive_url && cfg.kertas_kerja_drive_url.startsWith('http')) {
+            if (!d.drive_direct_url || d.drive_direct_url.includes('1iDOCHEP_PTSS')) {
+              d.drive_direct_url = cfg.kertas_kerja_drive_url;
+            }
+            d.drive_folder_path = cfg.kertas_kerja_drive_url;
+          }
+          if (cfg.kertas_kerja_folder_id) d.drive_file_id = cfg.kertas_kerja_folder_id;
+        }
+      });
+      saveSystemState();
+    }
+
+    // Fungsi jambatan untuk menghantar fail fizikal (Base64) terus ke Google Drive sebenar melalui Google Apps Script
+    async function uploadFileToRealGoogleDrive(payload) {
+      const cfg = DB.TETAPAN_SISTEM;
+      const folderId = payload.jenis_dokumen === 'Laporan'
+        ? BackendService.extractGoogleIdFromUrl(cfg.laporan_drive_url || cfg.laporan_folder_id)
+        : BackendService.extractGoogleIdFromUrl(cfg.kertas_kerja_drive_url || cfg.kertas_kerja_folder_id);
+
+      const gasPayload = {
+        action: 'uploadFileToDrive',
+        folder_id: folderId,
+        spreadsheet_id: cfg.spreadsheet_id,
+        file_name: payload.nama_fail,
+        mime_type: payload.mime_type || 'application/pdf',
+        base64_data: payload.file_data_url || '',
+        document_meta: {
+          program_id: payload.program_id,
+          unit_id: payload.unit_id,
+          jenis_dokumen: payload.jenis_dokumen,
+          disediakan_oleh: payload.disediakan_oleh
+        }
+      };
+
+      // 1. Jika dibuka terus dari Google Apps Script HtmlService (script.google.com)
+      if (typeof google !== 'undefined' && google.script && google.script.run) {
+        return new Promise((resolve, reject) => {
+          google.script.run
+            .withSuccessHandler(res => resolve(res))
+            .withFailureHandler(err => reject(err))
+            .uploadFileToDriveBackend(gasPayload);
+        });
+      }
+
+      // 2. Jika dibuka dari luar (Preview / Hosting) dan Admin telah memasukkan Web App URL (exec)
+      if (cfg.web_app_url && cfg.web_app_url.startsWith('https://script.google.com')) {
+        try {
+          const response = await fetch(cfg.web_app_url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+            body: JSON.stringify(gasPayload)
+          });
+          const result = await response.json();
+          if (result && result.status === 'SUCCESS') {
+            return result;
+          }
+          throw new Error(result.message || 'Gagal memuat naik ke Web App GAS.');
+        } catch (err) {
+          console.warn('Ralat sambungan Web App GAS:', err);
+          return { status: 'LOCAL_ONLY', error: err.message };
+        }
+      }
+
+      return { status: 'NO_GAS_BRIDGE' };
     }
 
     function getTargetDriveUrlForDoc(docRecord) {
       const cfg = DB.TETAPAN_SISTEM;
-      if (docRecord && docRecord.drive_direct_url) return docRecord.drive_direct_url;
+      if (docRecord && docRecord.drive_file_web_url && docRecord.drive_file_web_url.startsWith('http')) {
+        return docRecord.drive_file_web_url;
+      }
+      if (docRecord && docRecord.drive_direct_url && docRecord.drive_direct_url.startsWith('http') && !docRecord.drive_direct_url.includes('1iDOCHEP_PTSS')) {
+        return docRecord.drive_direct_url;
+      }
       if (docRecord && docRecord.jenis_dokumen === 'Laporan') {
         if (cfg.laporan_drive_url && cfg.laporan_drive_url.startsWith('http')) return cfg.laporan_drive_url;
         if (cfg.laporan_folder_id) return `https://drive.google.com/drive/folders/${cfg.laporan_folder_id}`;
@@ -448,6 +573,36 @@
       }
       if (cfg.root_drive_url && cfg.root_drive_url.startsWith('http')) return cfg.root_drive_url;
       return 'https://drive.google.com/drive/my-drive';
+    }
+
+    function loadSystemState() {
+      try {
+        let raw = null;
+        try {
+          raw = localStorage.getItem('iDOC_HEP_PTSS_STATE_V2');
+        } catch (e) {}
+        if (!raw && window.name && window.name.startsWith('IDOC_HEP_STATE:')) {
+          raw = window.name.replace('IDOC_HEP_STATE:', '');
+        }
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed.TETAPAN_SISTEM) Object.assign(DB.TETAPAN_SISTEM, parsed.TETAPAN_SISTEM);
+          if (Array.isArray(parsed.DOKUMEN)) DB.DOKUMEN = parsed.DOKUMEN;
+          if (Array.isArray(parsed.PROGRAM)) DB.PROGRAM = parsed.PROGRAM;
+          if (Array.isArray(parsed.JABATAN_UNIT)) DB.JABATAN_UNIT = parsed.JABATAN_UNIT;
+          if (Array.isArray(parsed.SUMBER_DANA)) DB.SUMBER_DANA = parsed.SUMBER_DANA;
+          if (Array.isArray(parsed.BELANJAWAN)) DB.BELANJAWAN = parsed.BELANJAWAN;
+        }
+      } catch (e) {}
+      syncAllDocumentsWithDriveSettings();
+    }
+
+    function getTargetDriveUrlForDoc(docRecord) {
+      const cfg = DB.TETAPAN_SISTEM;
+      if (docRecord && docRecord.jenis_dokumen === 'Laporan') {
+        return normalizeDriveUrl(cfg.laporan_drive_url);
+      }
+      return normalizeDriveUrl(cfg.kertas_kerja_drive_url);
     }
 
     /***************************************************************************
@@ -688,12 +843,22 @@
         }
 
         const folderTargetId = payload.jenis_dokumen === 'Laporan'
-          ? DB.TETAPAN_SISTEM.laporan_folder_id
-          : DB.TETAPAN_SISTEM.kertas_kerja_folder_id;
+          ? BackendService.extractGoogleIdFromUrl(DB.TETAPAN_SISTEM.laporan_drive_url || DB.TETAPAN_SISTEM.laporan_folder_id)
+          : BackendService.extractGoogleIdFromUrl(DB.TETAPAN_SISTEM.kertas_kerja_drive_url || DB.TETAPAN_SISTEM.kertas_kerja_folder_id);
 
         const targetDriveUrl = payload.jenis_dokumen === 'Laporan'
           ? DB.TETAPAN_SISTEM.laporan_drive_url
           : DB.TETAPAN_SISTEM.kertas_kerja_drive_url;
+
+        // Cuba hantar fail sebenar ke Google Drive melalui Google Apps Script
+        let driveUploadResult = { status: 'NO_GAS_BRIDGE' };
+        if (payload.file_data_url) {
+          driveUploadResult = await uploadFileToRealGoogleDrive({
+            ...payload,
+            program_id: targetProgram.program_id,
+            unit_id: targetProgram.unit_id
+          });
+        }
 
         const newDocId = 'DOC2026' + String(DB.DOKUMEN.length + 1).padStart(2, '0');
         const newDoc = {
@@ -706,8 +871,10 @@
           mime_type: payload.mime_type || 'application/pdf',
           file_data_url: payload.file_data_url || '',
           drive_direct_url: targetDriveUrl || '',
-          drive_file_id: folderTargetId || ('1DRV_' + targetProgram.unit_id + '_' + targetProgram.program_id),
-          drive_folder_path: `${DB.TETAPAN_SISTEM.root_folder_name}/2026/${targetProgram.unit_id}/${targetProgram.program_id}/${payload.jenis_dokumen}/`,
+          drive_file_web_url: (driveUploadResult && driveUploadResult.file_url) ? driveUploadResult.file_url : '',
+          drive_file_id: (driveUploadResult && driveUploadResult.file_id) ? driveUploadResult.file_id : (folderTargetId || ('1DRV_' + targetProgram.unit_id + '_' + targetProgram.program_id)),
+          drive_folder_path: targetDriveUrl || `${DB.TETAPAN_SISTEM.root_folder_name}/2026/${targetProgram.unit_id}/${targetProgram.program_id}/${payload.jenis_dokumen}/`,
+          drive_sync_status: (driveUploadResult && driveUploadResult.status === 'SUCCESS') ? 'DISIMPAN_DALAM_DRIVE' : 'SIMPANAN_LOKAL',
           disediakan_oleh: payload.disediakan_oleh || user.full_name,
           tarikh_muat_naik: this.nowStr().slice(0, 10),
           status_pengesahan: 'DISAHKAN'
@@ -715,8 +882,9 @@
 
         DB.DOKUMEN.unshift(newDoc);
         this.syncProgramAndBudget();
+        saveSystemState();
         this.logAudit(user, 'MUAT_NAIK_DOKUMEN', 'BERJAYA', `Muat naik ${newDoc.jenis_dokumen} (${newDoc.nama_fail}) bagi program ${targetProgram.program_id}`);
-        return { document: newDoc, program: targetProgram };
+        return { document: newDoc, program: targetProgram, driveUploadResult };
       },
       getBudgets(token, filters = {}) {
         this.syncProgramAndBudget();
@@ -1669,28 +1837,33 @@
                   <label class="block text-[11px] font-bold text-slate-600 mb-1">Tarikh Program</label>
                   <input type="date" id="uploadExtractedDate" required value="2026-04-20"
                     class="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-xs font-semibold bg-white">
-                </div>
+            <div class="p-4 rounded-xl bg-blue-50/70 border border-blue-200 text-xs text-blue-900 space-y-2">
+              <div class="flex items-center justify-between gap-3">
                 <div>
-                  <label class="block text-[11px] font-bold text-slate-600 mb-1">Disediakan Oleh</label>
-                  <input type="text" id="uploadExtractedAuthor" required value="${user.full_name}"
-                    class="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-xs font-semibold bg-white">
+                  <span class="font-bold">Destinasi Folder Google Drive Sebenar (Kertas Kerja / Laporan):</span>
+                  <div class="font-mono text-[11px] text-blue-700 mt-0.5 break-all">${DB.TETAPAN_SISTEM.kertas_kerja_drive_url}</div>
                 </div>
+                <i class="fa-brands fa-google-drive text-2xl text-blue-600 shrink-0"></i>
               </div>
-            </div>
-
-            <div class="p-4 rounded-xl bg-blue-50/70 border border-blue-200 text-xs text-blue-900 flex items-center justify-between gap-3">
-              <div>
-                <span class="font-bold">Destinasi Folder Google Drive Automatik:</span>
-                <div class="font-mono text-[11px] text-blue-700 mt-0.5">${DB.TETAPAN_SISTEM.root_folder_name}/2026/${user.unit_id === 'ALL' ? 'U001' : user.unit_id}/[ID_PROGRAM]/[Kertas Kerja atau Laporan]/</div>
-              </div>
-              <i class="fa-brands fa-google-drive text-2xl text-blue-600"></i>
+              ${(!DB.TETAPAN_SISTEM.web_app_url && typeof google === 'undefined') ? `
+                <div class="p-2.5 rounded-lg bg-amber-50 border border-amber-300 text-amber-900 text-[11px] flex items-start gap-2">
+                  <i class="fa-solid fa-triangle-exclamation text-amber-600 mt-0.5"></i>
+                  <div>
+                    <strong>Penting supaya fail masuk ke dalam Google Drive anda:</strong> Pastikan Pentadbir telah menampal <strong>URL Web App Google Apps Script (<code>https://script.google.com/macros/s/.../exec</code>)</strong> di menu <strong>Tetapan Google Drive</strong>, atau buka aplikasi ini melalui pautan Web App Google Apps Script.
+                  </div>
+                </div>
+              ` : `
+                <div class="p-2 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] font-bold flex items-center gap-1.5">
+                  <i class="fa-solid fa-circle-check text-emerald-600"></i> Sambungan Aktif: Fail yang dipilih akan terus dihantar dan disimpan ke dalam folder Google Drive anda!
+                </div>
+              `}
             </div>
 
             <div class="flex justify-end gap-3 pt-2">
               <button type="button" onclick="navigateToMenu('dashboard')" class="px-5 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs">
                 Batal
               </button>
-              <button type="submit" class="px-8 py-3 rounded-xl text-white font-extrabold text-xs btn-primary-grad shadow-md flex items-center gap-2">
+              <button type="submit" id="btnSubmitUploadDoc" class="px-8 py-3 rounded-xl text-white font-extrabold text-xs btn-primary-grad shadow-md flex items-center gap-2">
                 <i class="fa-solid fa-cloud-arrow-up"></i> Simpan ke Google Drive & Pangkalan Data
               </button>
             </div>
@@ -1748,6 +1921,11 @@
 
     async function handleUploadDocumentFormSubmit(e) {
       e.preventDefault();
+      const submitBtn = document.getElementById('btnSubmitUploadDoc');
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Sedang Memuat Naik Fail ke Google Drive...`;
+      }
       try {
         const jenis = document.getElementById('uploadDocType').value;
         const progId = document.getElementById('uploadProgramId').value;
@@ -1768,10 +1946,19 @@
         });
 
         pendingUploadFileData = null;
-        showToast(`Berjaya! Fail "${res.document.nama_fail}" telah disimpan dalam Google Drive & dipautkan ke ${res.program.program_id}.`, 'success');
+        if (res.driveUploadResult && res.driveUploadResult.status === 'SUCCESS') {
+          showToast(`Berjaya! Fail "${res.document.nama_fail}" telah disimpan terus ke dalam folder Google Drive anda!`, 'success');
+        } else {
+          showToast(`Rekod "${res.document.nama_fail}" disimpan. Untuk menghantar fail fizikal terus ke Google Drive, pastikan Web App URL (Code.gs) telah dimasukkan di Tetapan Google Drive.`, 'warning');
+        }
         navigateToMenu('dashboard');
       } catch (err) {
         showToast(err.message, 'error');
+      } finally {
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.innerHTML = `<i class="fa-solid fa-cloud-arrow-up"></i> Simpan ke Google Drive & Pangkalan Data`;
+        }
       }
     }
 
@@ -1815,9 +2002,9 @@
                     <td class="py-3 px-3">
                       <span class="px-2.5 py-0.5 rounded-full text-xs font-bold ${d.jenis_dokumen === 'Kertas Kerja' ? 'bg-emerald-100 text-emerald-800' : 'bg-blue-100 text-blue-800'}">${d.jenis_dokumen}</span>
                     </td>
-                    <td class="py-3 px-3">
-                      <a href="${getTargetDriveUrlForDoc(d)}" target="_blank" rel="noopener noreferrer" class="font-mono text-[11px] text-blue-600 hover:underline flex items-center gap-1">
-                        <i class="fa-brands fa-google-drive"></i> ${d.drive_folder_path}
+                    <td class="py-3 px-3 max-w-xs">
+                      <a href="${getTargetDriveUrlForDoc(d)}" target="_blank" rel="noopener noreferrer" class="font-mono text-[11px] text-blue-600 hover:underline flex items-center gap-1 truncate">
+                        <i class="fa-brands fa-google-drive shrink-0"></i> <span class="truncate">${getTargetDriveUrlForDoc(d)}</span>
                       </a>
                     </td>
                     <td class="py-3 px-3 text-center">
@@ -2562,9 +2749,9 @@
                     <td class="py-3.5 px-3">
                       <span class="px-2.5 py-0.5 rounded-full font-bold ${d.jenis_dokumen === 'Kertas Kerja' ? 'bg-emerald-100 text-emerald-800' : 'bg-blue-100 text-blue-800'}">${d.jenis_dokumen}</span>
                     </td>
-                    <td class="py-3.5 px-3">
-                      <a href="${getTargetDriveUrlForDoc(d)}" target="_blank" rel="noopener noreferrer" class="font-mono text-[11px] text-blue-600 hover:underline flex items-center gap-1">
-                        <i class="fa-brands fa-google-drive"></i> ${d.drive_folder_path}
+                    <td class="py-3.5 px-3 max-w-xs">
+                      <a href="${getTargetDriveUrlForDoc(d)}" target="_blank" rel="noopener noreferrer" class="font-mono text-[11px] text-blue-600 hover:underline flex items-center gap-1 truncate">
+                        <i class="fa-brands fa-google-drive shrink-0"></i> <span class="truncate">${getTargetDriveUrlForDoc(d)}</span>
                       </a>
                     </td>
                     <td class="py-3.5 px-3 text-center">
@@ -2597,9 +2784,9 @@
               <div><strong>ID Dokumen:</strong> ${d.document_id}</div>
               <div><strong>Jenis Dokumen:</strong> ${d.jenis_dokumen}</div>
               <div class="flex flex-wrap items-center gap-1.5">
-                <strong>Laluan Google Drive:</strong>
-                <a href="${driveUrl}" target="_blank" rel="noopener noreferrer" class="font-mono text-blue-600 hover:text-blue-800 underline font-semibold break-all">
-                  ${d.drive_folder_path} <i class="fa-solid fa-arrow-up-right-from-square text-[10px] ml-0.5"></i>
+                <strong>Pautan Google Drive (${d.jenis_dokumen}):</strong>
+                <a href="${driveUrl}" target="_blank" rel="noopener noreferrer" class="font-mono text-blue-600 hover:text-blue-800 underline font-bold break-all">
+                  ${driveUrl} <i class="fa-solid fa-arrow-up-right-from-square text-[10px] ml-0.5"></i>
                 </a>
               </div>
               <div><strong>Disediakan Oleh:</strong> ${d.disediakan_oleh} (${d.tarikh_muat_naik})</div>
@@ -2623,7 +2810,7 @@
                 </a>
                 <div>
                   <div class="font-extrabold text-slate-900 text-sm sm:text-base">Fail Disimpan Dalam Folder Google Drive iDOC HEP</div>
-                  <div class="text-xs text-slate-500 mt-1">Pautan Folder (${d.jenis_dokumen}): <span class="font-mono font-bold text-slate-700 break-all">${driveUrl}</span></div>
+                  <div class="text-xs text-slate-500 mt-1">Pautan Aktif (${d.jenis_dokumen}): <a href="${driveUrl}" target="_blank" rel="noopener noreferrer" class="font-mono font-bold text-blue-700 underline break-all">${driveUrl}</a></div>
                 </div>
                 <div class="pt-2 flex flex-wrap justify-center gap-2.5">
                   <a href="${driveUrl}" target="_blank" rel="noopener noreferrer"
@@ -2650,14 +2837,24 @@
               const driveUrl = getTargetDriveUrlForDoc(d);
               return `
                 <div class="p-3.5 rounded-xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div>
-                    <span class="px-2 py-0.5 rounded bg-blue-100 text-blue-800 font-bold text-[11px]">${d.jenis_dokumen}</span>
-                    <div class="font-bold text-slate-900 mt-1">${d.nama_fail}</div>
-                    <a href="${driveUrl}" target="_blank" rel="noopener noreferrer" class="text-[11px] font-mono text-blue-600 hover:underline block mt-0.5">
-                      <i class="fa-brands fa-google-drive mr-1"></i>${d.drive_folder_path}
+                  <div class="min-w-0 flex-1">
+                    <div class="flex items-center gap-2">
+                      <span class="px-2 py-0.5 rounded bg-blue-100 text-blue-800 font-bold text-[11px]">${d.jenis_dokumen}</span>
+                      ${d.drive_sync_status === 'DISIMPAN_DALAM_DRIVE'
+                        ? '<span class="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 font-bold text-[10px]"><i class="fa-solid fa-check mr-1"></i>Tersimpan Dalam Google Drive</span>'
+                        : '<span class="px-2 py-0.5 rounded bg-amber-100 text-amber-800 font-bold text-[10px]">Simpanan Pelayar (Perlu Web App URL)</span>'}
+                    </div>
+                    <div class="font-bold text-slate-900 mt-1 truncate">${d.nama_fail}</div>
+                    <a href="${driveUrl}" target="_blank" rel="noopener noreferrer" class="text-[11px] font-mono text-blue-600 hover:underline block mt-0.5 truncate">
+                      <i class="fa-brands fa-google-drive mr-1"></i>${driveUrl}
                     </a>
                   </div>
                   <div class="flex items-center gap-2 shrink-0">
+                    ${d.file_data_url ? `
+                      <a href="${d.file_data_url}" download="${d.nama_fail}" title="Muat Turun Fail PDF" class="px-3 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold text-xs flex items-center gap-1">
+                        <i class="fa-solid fa-download"></i> Fail
+                      </a>
+                    ` : ''}
                     <button onclick="previewUploadedDocument('${d.document_id}')" class="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs">
                       Pratonton
                     </button>
@@ -2896,8 +3093,20 @@
       container.innerHTML = `
         <div class="max-w-4xl mx-auto bg-white rounded-2xl p-6 sm:p-8 shadow-xs border border-slate-200 space-y-6">
           <div class="border-b border-slate-200 pb-4">
-            <h1 class="text-xl sm:text-2xl font-extrabold text-slate-900">Tetapan Pautan Google Drive & Google Sheets</h1>
-            <p class="text-xs text-slate-500 mt-1">Pentadbir menetapkan terus pautan folder Google Drive untuk Kertas Kerja dan Laporan. Pengguna tidak perlu memasukkan pautan semasa memuat naik fail.</p>
+            <h1 class="text-xl sm:text-2xl font-extrabold text-slate-900">Tetapan Pautan Google Drive, Web App GAS & Google Sheets</h1>
+            <p class="text-xs text-slate-500 mt-1">Pentadbir menetapkan pautan folder Google Drive untuk Kertas Kerja dan Laporan serta URL Web App Google Apps Script supaya fail yang dimuat naik terus masuk ke dalam Google Drive anda.</p>
+          </div>
+
+          <div class="p-4 rounded-2xl bg-blue-50 border border-blue-200 text-xs text-blue-950 space-y-1.5">
+            <div class="font-extrabold text-blue-900 flex items-center gap-2">
+              <i class="fa-solid fa-circle-info text-blue-600"></i> Mengapa fail tidak muncul di dalam Google Drive jika hanya tampal pautan folder?
+            </div>
+            <p class="leading-relaxed">Pelayar web tidak boleh menulis fail secara terus ke dalam Google Drive tanpa kebenaran API. Untuk memastikan setiap fail PDF/DOCX yang dimuat naik oleh pengguna benar-benar masuk ke dalam folder <strong>KERTAS KERJA</strong> atau <strong>LAPORAN</strong> di Google Drive anda:</p>
+            <ol class="list-decimal list-inside space-y-1 font-semibold pt-1">
+              <li>Buka menu <strong>Integrasi Google (Code.gs)</strong> di sebelah kiri dan salin kod penuh <code>Code.gs</code> ke dalam Google Apps Script anda.</li>
+              <li>Klik butang biru <strong>Deploy &gt; New deployment &gt; Web app</strong> (Execute as: <em>Me</em>, Who has access: <em>Anyone</em>).</li>
+              <li>Salin <strong>Web App URL (<code>https://script.google.com/macros/s/.../exec</code>)</strong> dan tampalkan pada ruangan ke-4 di bawah.</li>
+            </ol>
           </div>
 
           <form onsubmit="handleSaveDriveSettings(event)" class="space-y-4 text-xs sm:text-sm">
@@ -2928,9 +3137,15 @@
               <input type="text" id="cfgSheetId" required value="${cfg.spreadsheet_id}" class="w-full px-4 py-2.5 rounded-xl border border-slate-300 font-mono text-xs">
             </div>
 
+            <div class="p-4 rounded-2xl bg-emerald-50/70 border border-emerald-200">
+              <label class="block font-extrabold text-emerald-950 mb-1">4. URL Web App Google Apps Script (Wajib Untuk Simpan Fail Sebenar Ke Google Drive)</label>
+              <input type="url" id="cfgWebAppUrl" value="${cfg.web_app_url || ''}" placeholder="https://script.google.com/macros/s/AKfycb.../exec" class="w-full px-4 py-2.5 rounded-xl border border-emerald-300 bg-white font-mono text-xs">
+              <p class="text-[11px] text-emerald-800 mt-1">Tampalkan URL Web App hasil Deploy daripada Google Apps Script supaya fail PDF/DOCX terus dicipta di dalam folder Google Drive anda.</p>
+            </div>
+
             <div class="flex justify-end pt-2">
               <button type="submit" class="px-6 py-3 rounded-xl text-white font-bold text-xs btn-primary-grad shadow-md">
-                Simpan Tetapan Google Drive & Sheets
+                Simpan & Aktifkan Sambungan Google Drive
               </button>
             </div>
           </form>
@@ -2943,15 +3158,18 @@
       const kkUrl = document.getElementById('cfgKKDriveUrl').value.trim();
       const lapUrl = document.getElementById('cfgLapDriveUrl').value.trim();
       const sheetId = document.getElementById('cfgSheetId').value.trim();
+      const webAppUrl = document.getElementById('cfgWebAppUrl').value.trim();
 
       DB.TETAPAN_SISTEM.kertas_kerja_drive_url = kkUrl;
       DB.TETAPAN_SISTEM.kertas_kerja_folder_id = BackendService.extractGoogleIdFromUrl(kkUrl);
       DB.TETAPAN_SISTEM.laporan_drive_url = lapUrl;
       DB.TETAPAN_SISTEM.laporan_folder_id = BackendService.extractGoogleIdFromUrl(lapUrl);
       DB.TETAPAN_SISTEM.spreadsheet_id = BackendService.extractGoogleIdFromUrl(sheetId);
+      DB.TETAPAN_SISTEM.web_app_url = webAppUrl;
 
+      syncAllDocumentsWithDriveSettings();
       saveSystemState();
-      showToast('Tetapan pautan Google Drive Kertas Kerja & Laporan telah disimpan dan diaktifkan untuk semua pengguna!', 'success');
+      showToast('Tetapan pautan Google Drive & Web App telah disimpan dan diselaraskan kepada semua dokumen!', 'success');
       renderWorkspaceContent();
     }
 
@@ -3029,11 +3247,80 @@
     }
 
     function renderGasMigrationGuide(container) {
+      const cfg = DB.TETAPAN_SISTEM;
       const code = `/**
  * iDOC HEP PTSS — Kod Penuh Google Apps Script (Code.gs)
- * Database ID: 1nW0DEFCj6B3k89SOfzMhQoNVk7SkSLs-a27jakOzmfE
+ * Menyimpan Fail Sebenar (PDF/DOCX) ke Google Drive & Rekod ke Google Sheets
+ * Database ID: ${cfg.spreadsheet_id}
  */
-const SPREADSHEET_ID = '1nW0DEFCj6B3k89SOfzMhQoNVk7SkSLs-a27jakOzmfE';
+const SPREADSHEET_ID = '${cfg.spreadsheet_id}';
+const KERTAS_KERJA_FOLDER_ID = '${cfg.kertas_kerja_folder_id}';
+const LAPORAN_FOLDER_ID = '${cfg.laporan_folder_id}';
+
+function doGet(e) {
+  return HtmlService.createHtmlOutputFromFile('index')
+    .setTitle('iDOC HEP — Politeknik Tuanku Syed Sirajuddin')
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+// Menerima muat naik fail daripada aplikasi web (melalui Web App URL)
+function doPost(e) {
+  try {
+    const payload = JSON.parse(e.postData.contents);
+    if (payload.action === 'uploadFileToDrive') {
+      const res = uploadFileToDriveBackend(payload);
+      return ContentService.createTextOutput(JSON.stringify(res))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+    return ContentService.createTextOutput(JSON.stringify({ status: 'ERROR', message: 'Tindakan tidak sah' }))
+      .setMimeType(ContentService.MimeType.JSON);
+  } catch (err) {
+    return ContentService.createTextOutput(JSON.stringify({ status: 'ERROR', message: err.toString() }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
+// Fungsi utama mencipta fail PDF/DOCX di dalam Folder Google Drive sebenar
+function uploadFileToDriveBackend(payload) {
+  const folderId = payload.folder_id || (payload.document_meta.jenis_dokumen === 'Laporan' ? LAPORAN_FOLDER_ID : KERTAS_KERJA_FOLDER_ID);
+  const folder = DriveApp.getFolderById(folderId);
+
+  const base64String = payload.base64_data.includes(',')
+    ? payload.base64_data.split(',')[1]
+    : payload.base64_data;
+
+  const decodedBytes = Utilities.base64Decode(base64String);
+  const blob = Utilities.newBlob(decodedBytes, payload.mime_type || 'application/pdf', payload.file_name);
+  const driveFile = folder.createFile(blob);
+
+  // Rekodkan ke dalam tab DOKUMEN di Google Sheets
+  try {
+    const ss = SpreadsheetApp.openById(payload.spreadsheet_id || SPREADSHEET_ID);
+    let docSheet = ss.getSheetByName('DOKUMEN');
+    if (docSheet) {
+      docSheet.appendRow([
+        'DOC' + new Date().getTime(),
+        payload.document_meta.program_id,
+        payload.document_meta.unit_id,
+        payload.document_meta.jenis_dokumen,
+        payload.file_name,
+        Math.round(blob.getBytes().length / 1024) + ' KB',
+        driveFile.getId(),
+        driveFile.getUrl(),
+        payload.document_meta.disediakan_oleh,
+        new Date().toISOString().slice(0, 10),
+        'DISAHKAN'
+      ]);
+    }
+  } catch (sheetErr) {}
+
+  return {
+    status: 'SUCCESS',
+    file_id: driveFile.getId(),
+    file_url: driveFile.getUrl(),
+    folder_url: folder.getUrl()
+  };
+}
 
 function setupDatabase() {
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
@@ -3058,15 +3345,26 @@ function setupDatabase() {
 
       container.innerHTML = `
         <div class="bg-white rounded-2xl p-6 shadow-xs border border-slate-200 space-y-4">
-          <div class="flex items-center justify-between">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
-              <h1 class="text-xl font-extrabold text-slate-900">Kod Backend Google Apps Script (Code.gs)</h1>
-              <p class="text-xs text-slate-500">Salin dan jalankan fungsi <code>setupDatabase()</code> dalam editor Google Apps Script anda.</p>
+              <h1 class="text-xl font-extrabold text-slate-900">Kod Backend Google Apps Script (Code.gs) — Simpan Fail Ke Google Drive</h1>
+              <p class="text-xs text-slate-500">Salin kod ini ke dalam <code>Code.gs</code>, jalankan <code>setupDatabase()</code>, kemudian klik <strong>Deploy &gt; New deployment &gt; Web app</strong>.</p>
             </div>
+            <button onclick="copyGasCodeToClipboard()" class="px-4 py-2.5 rounded-xl btn-primary-grad text-white font-bold text-xs flex items-center gap-2 shrink-0">
+              <i class="fa-regular fa-copy"></i> Salin Kod Code.gs
+            </button>
           </div>
-          <pre class="p-4 rounded-2xl bg-slate-900 text-sky-200 text-xs overflow-x-auto font-mono leading-relaxed">${code}</pre>
+          <textarea id="gasCodeTextarea" readonly class="w-full h-96 p-4 rounded-2xl bg-slate-900 text-sky-200 text-xs font-mono leading-relaxed focus:outline-none">${code}</textarea>
         </div>
       `;
+    }
+
+    function copyGasCodeToClipboard() {
+      const el = document.getElementById('gasCodeTextarea');
+      if (!el) return;
+      el.select();
+      document.execCommand('copy');
+      showToast('Kod Code.gs berjaya disalin! Tampalkan ke dalam editor Google Apps Script anda.', 'success');
     }
 
     async function openSecurityAuditModal() {
@@ -3087,6 +3385,7 @@ function setupDatabase() {
 
     window.onload = function () {
       loadSystemState();
+      syncAllDocumentsWithDriveSettings();
       BackendService.syncProgramAndBudget();
       switchAuthTab('login');
     };
